@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <title>写真付き地図（日時入力＆削除機能付き）</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <style>
+    #map {
+      height: 1000px;
+      width: 100%;
+    }
+    #fileInput {
+      display: none;
+    }
+    .popup-img {
+      width: 200px;
+      display: block;
+      margin: 5px 0;
+    }
+    .delete-btn {
+      background: red;
+      color: white;
+      border: none;
+      padding: 5px 8px;
+      cursor: pointer;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+
+<h2>写真＋コメント＋日時入力＋削除機能付き地図</h2>
+<p>クリックでピンを追加し、日時も入力できます。</p>
+<div id="map"></div>
+<input type="file" id="fileInput" accept="image/*" />
+
+<script>
+  const STORAGE_KEY = 'savedMarkers';
+  const map = L.map('map').setView([38.725213, 139.827071], 15); // 鶴岡市役所
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  let tempLatLng = null;
+  const markerList = [];
+
+  // ポップアップHTMLを生成
+  function createPopupContent(data, index) {
+    const { comment, image, lat, lng, datetime } = data;
+    return `
+      <b>コメント:</b><br>${comment}<br>
+      <b>日時:</b> ${datetime || '未設定'}<br>
+      <img src="${image}" class="popup-img"><br>
+      <small>緯度: ${lat}<br>経度: ${lng}</small><br>
+      <button class="delete-btn" onclick="deleteMarkerAt(${index})">🗑️ 削除</button>
+    `;
+  }
+
+  // ローカルストレージからマーカー復元
+  function loadMarkersFromStorage() {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (!saved) return;
+    const markers = JSON.parse(saved);
+    markers.forEach((data, index) => {
+      addMarker(data, index);
+    });
+  }
+
+  // ローカルストレージに保存
+  function saveMarkersToStorage(markers) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(markers));
+  }
+
+  // 新規マーカーを保存用に追加
+  function addMarkerToStorage(data) {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    const markers = saved ? JSON.parse(saved) : [];
+    markers.push(data);
+    saveMarkersToStorage(markers);
+  }
+
+  // マーカー作成＋追加
+  function addMarker(data, index) {
+    const { lat, lng } = data;
+    const marker = L.marker([lat, lng]).addTo(map);
+    marker.bindPopup(createPopupContent(data, index));
+    markerList[index] = marker;
+  }
+
+  // すべてのポップアップを更新（index整合性のため）
+  function updateAllPopupContents() {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    markerList.forEach((marker, i) => {
+      marker.bindPopup(createPopupContent(saved[i], i));
+    });
+  }
+
+  // マーカー削除
+  function deleteMarker(marker, index) {
+    map.removeLayer(marker);
+    markerList.splice(index, 1);
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    saved.splice(index, 1);
+    saveMarkersToStorage(saved);
+    updateAllPopupContents();
+  }
+
+  // ファイル選択イベント
+  document.getElementById('fileInput').addEventListener('change', function () {
+    const file = this.files[0];
+    if (!file || !tempLatLng) return;
+
+    const reader = new FileReader();
+    reader.onload = function (event) {
+      const imageData = event.target.result;
+      const comment = prompt("この場所のコメントを入力してください：");
+      if (!comment || comment.trim() === "") return;
+
+      // 日付と時間を入力させるダイアログ
+      let datetime = prompt("日付と時間を入力してください（例: 2025-07-03 14:30）", getCurrentDateTime());
+      if (!datetime || datetime.trim() === "") datetime = "未設定";
+
+      const lat = parseFloat(tempLatLng.lat.toFixed(6));
+      const lng = parseFloat(tempLatLng.lng.toFixed(6));
+      const newData = { lat, lng, comment, image: imageData, datetime };
+
+      const index = markerList.length;
+      addMarkerToStorage(newData);
+      addMarker(newData, index);
+
+      this.value = '';
+      tempLatLng = null;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  // 地図クリックでファイル選択をトリガー
+  map.on('click', function (e) {
+    tempLatLng = e.latlng;
+    document.getElementById('fileInput').click();
+  });
+
+  // ページロード時に保存データを復元
+  loadMarkersFromStorage();
+
+  // グローバル関数として削除関数を公開
+  window.deleteMarkerAt = function (index) {
+    if (confirm("このピンを削除しますか？")) {
+      deleteMarker(markerList[index], index);
+    }
+  };
+
+  // 現在の日時文字列を返す補助関数
+  function getCurrentDateTime() {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
+  }
+</script>
+
+</body>
+</html>
