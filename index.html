@@ -2,14 +2,15 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <title>写真付き地図（日時入力＆削除機能付き）</title>
+  <title>写真付き地図（日時入力＆削除＆URL共有機能付き）</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <style>
     #map {
-      height: 1000px;
+      height: 700px;
       width: 100%;
+      margin-bottom: 10px;
     }
     #fileInput {
       display: none;
@@ -27,141 +28,183 @@
       cursor: pointer;
       border-radius: 3px;
     }
+    #shareUrl {
+      width: 100%;
+      padding: 5px;
+      margin-bottom: 10px;
+    }
   </style>
 </head>
 <body>
 
-<h2>写真＋コメント＋日時入力＋削除機能付き地図</h2>
-<p>クリックでピンを追加し、日時も入力できます。</p>
+<h2>写真＋コメント＋日時入力＋削除＋URL共有機能付き地図</h2>
+<p>クリックでピンを追加し、画像もアップロード可能です。</p>
+
+<button id="shareBtn" style="background:#f00;color:#fff;padding:8px;border:none;cursor:pointer;margin-bottom:10px;">
+  共有用URLを生成
+</button>
+<input type="text" id="shareUrl" placeholder="ここに共有用URLが表示されます" readonly>
+
 <div id="map"></div>
 <input type="file" id="fileInput" accept="image/*" />
 
 <script>
   const STORAGE_KEY = 'savedMarkers';
-  const map = L.map('map').setView([38.725213, 139.827071], 15); // 鶴岡市役所
+  const map = L.map('map').setView([38.725213, 139.827071], 15);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap contributors'
   }).addTo(map);
 
+  let markerList = [];
   let tempLatLng = null;
-  const markerList = [];
+  let tempImageBase64 = null;
 
-  // ポップアップHTMLを生成
+  // ポップアップHTML生成
   function createPopupContent(data, index) {
     const { comment, image, lat, lng, datetime } = data;
     return `
       <b>コメント:</b><br>${comment}<br>
       <b>日時:</b> ${datetime || '未設定'}<br>
-      <img src="${image}" class="popup-img"><br>
-      <small>緯度: ${lat}<br>経度: ${lng}</small><br>
+      ${image ? `<img src="${image}" class="popup-img"><br>` : ''}
+      <small>緯度: ${lat.toFixed(6)}<br>経度: ${lng.toFixed(6)}</small><br>
       <button class="delete-btn" onclick="deleteMarkerAt(${index})">🗑️ 削除</button>
     `;
   }
 
-  // ローカルストレージからマーカー復元
-  function loadMarkersFromStorage() {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) return;
-    const markers = JSON.parse(saved);
-    markers.forEach((data, index) => {
-      addMarker(data, index);
-    });
-  }
-
-  // ローカルストレージに保存
+  // ローカルストレージ保存
   function saveMarkersToStorage(markers) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(markers));
   }
 
-  // 新規マーカーを保存用に追加
-  function addMarkerToStorage(data) {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    const markers = saved ? JSON.parse(saved) : [];
-    markers.push(data);
-    saveMarkersToStorage(markers);
-  }
-
-  // マーカー作成＋追加
+  // マーカー追加
   function addMarker(data, index) {
-    const { lat, lng } = data;
-    const marker = L.marker([lat, lng]).addTo(map);
+    const marker = L.marker([data.lat, data.lng]).addTo(map);
     marker.bindPopup(createPopupContent(data, index));
     markerList[index] = marker;
   }
 
-  // すべてのポップアップを更新（index整合性のため）
-  function updateAllPopupContents() {
+  // マーカー削除
+  function deleteMarkerAt(index) {
+    if (!confirm('本当にこのマーカーを削除しますか？')) return;
+    map.removeLayer(markerList[index]);
+    markerList.splice(index,1);
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    markerList.forEach((marker, i) => {
+    saved.splice(index,1);
+    saveMarkersToStorage(saved);
+    updateAllPopups();
+  }
+  window.deleteMarkerAt = deleteMarkerAt; // グローバル化（onclick用）
+
+  // 全ポップアップ更新
+  function updateAllPopups() {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    markerList.forEach((marker,i) => {
       marker.bindPopup(createPopupContent(saved[i], i));
     });
   }
 
-  // マーカー削除
-  function deleteMarker(marker, index) {
-    map.removeLayer(marker);
-    markerList.splice(index, 1);
+  // 保存済みマーカーを復元
+  function loadMarkersFromStorage() {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    saved.splice(index, 1);
-    saveMarkersToStorage(saved);
-    updateAllPopupContents();
+    saved.forEach((data,i) => {
+      addMarker(data, i);
+    });
   }
 
+  // URLからマーカー復元
+  function loadMarkersFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const markersParam = params.get('markers');
+    if (!markersParam) return false;
+    try {
+      const decoded = decodeURIComponent(markersParam);
+      const markers = JSON.parse(decoded);
+      if (!Array.isArray(markers)) return false;
+      saveMarkersToStorage(markers);
+      markers.forEach((data,i) => addMarker(data, i));
+      return true;
+    } catch(e) {
+      console.error('URLからマーカー復元失敗:', e);
+      return false;
+    }
+  }
+
+  // 共有用URL生成
+  function generateShareUrl() {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    if (saved.length === 0) {
+      alert("マーカーがありません。");
+      return;
+    }
+    // 位置・コメント・日時・画像を含めてエンコード
+    const dataForUrl = saved.map(({lat,lng,comment,datetime,image}) => ({
+      lat,lng,comment,datetime,image
+    }));
+    const encoded = encodeURIComponent(JSON.stringify(dataForUrl));
+    const baseUrl = location.origin + location.pathname;
+    const shareUrl = `${baseUrl}?markers=${encoded}`;
+    document.getElementById('shareUrl').value = shareUrl;
+  }
+
+  // ピン追加時の入力ダイアログ
+  function promptMarkerData(latlng, imageBase64) {
+    const comment = prompt("コメントを入力してください", "");
+    if (comment === null) return null;
+    const datetime = prompt("日時を入力してください (例: 2025-07-17 12:00)", "");
+    if (datetime === null) return null;
+    return {
+      lat: latlng.lat,
+      lng: latlng.lng,
+      comment: comment,
+      datetime: datetime,
+      image: imageBase64 || null
+    };
+  }
+
+  // マップクリック時にピン追加処理
+  map.on('click', async (e) => {
+    tempLatLng = e.latlng;
+    // ファイル選択を促す
+    document.getElementById('fileInput').value = null;
+    document.getElementById('fileInput').click();
+
+    // ファイル選択後の処理はfileInputのchangeイベントで行う
+  });
+
   // ファイル選択イベント
-  document.getElementById('fileInput').addEventListener('change', function () {
-    const file = this.files[0];
-    if (!file || !tempLatLng) return;
-
+  document.getElementById('fileInput').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) {
+      // ファイルなしでピン追加
+      addMarkerWithData(tempLatLng, null);
+      return;
+    }
     const reader = new FileReader();
-    reader.onload = function (event) {
-      const imageData = event.target.result;
-      const comment = prompt("この場所のコメントを入力してください：");
-      if (!comment || comment.trim() === "") return;
-
-      // 日付と時間を入力させるダイアログ
-      let datetime = prompt("日付と時間を入力してください（例: 2025-07-03 14:30）", getCurrentDateTime());
-      if (!datetime || datetime.trim() === "") datetime = "未設定";
-
-      const lat = parseFloat(tempLatLng.lat.toFixed(6));
-      const lng = parseFloat(tempLatLng.lng.toFixed(6));
-      const newData = { lat, lng, comment, image: imageData, datetime };
-
-      const index = markerList.length;
-      addMarkerToStorage(newData);
-      addMarker(newData, index);
-
-      this.value = '';
-      tempLatLng = null;
+    reader.onload = () => {
+      const base64Img = reader.result;
+      addMarkerWithData(tempLatLng, base64Img);
     };
     reader.readAsDataURL(file);
   });
 
-  // 地図クリックでファイル選択をトリガー
-  map.on('click', function (e) {
-    tempLatLng = e.latlng;
-    document.getElementById('fileInput').click();
-  });
-
-  // ページロード時に保存データを復元
-  loadMarkersFromStorage();
-
-  // グローバル関数として削除関数を公開
-  window.deleteMarkerAt = function (index) {
-    if (confirm("このピンを削除しますか？")) {
-      deleteMarker(markerList[index], index);
-    }
-  };
-
-  // 現在の日時文字列を返す補助関数
-  function getCurrentDateTime() {
-    const d = new Date();
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    const hh = String(d.getHours()).padStart(2, '0');
-    const min = String(d.getMinutes()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
+  // マーカー追加の実際の処理
+  function addMarkerWithData(latlng, imageBase64) {
+    const data = promptMarkerData(latlng, imageBase64);
+    if (!data) return;
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    saved.push(data);
+    saveMarkersToStorage(saved);
+    addMarker(data, saved.length -1);
   }
+
+  // 共有ボタン
+  document.getElementById('shareBtn').addEventListener('click', generateShareUrl);
+
+  // ページロード時
+  if (!loadMarkersFromUrl()) {
+    loadMarkersFromStorage();
+  }
+
 </script>
 
 </body>
